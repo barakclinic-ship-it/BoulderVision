@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>BoulderVision</title>
+<style>
+  :root{
+    --orange:#ff6a00;
+    --orange-dim:#ff6a0055;
+    --bg:#0a0a0a;
+    --panel:#141414;
+    --panel2:#1c1c1c;
+    --line:#2a2a2a;
+    --text:#f2f2f2;
+    --sub:#9a9a9a;
+    --white:#f5f5f5;
+    --danger:#ff3b3b;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    overscroll-behavior:none; height:100%;}
+  #app{display:flex; flex-direction:column; height:100vh; height:100dvh;}
+
+  header{display:flex; align-items:center; gap:10px; padding:14px 16px;
+    border-bottom:1px solid var(--line); flex-shrink:0;}
+  .logo{width:32px; height:32px; flex-shrink:0;}
+  header h1{font-size:17px; margin:0; font-weight:700; letter-spacing:.2px;}
+  header .tag{font-size:11px; color:var(--sub); margin-inline-start:auto;}
+
+  #stage{position:relative; flex:1; min-height:0; background:#000; overflow:hidden;}
+  video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    transform:scaleX(-1);}
+  canvas#overlay{position:absolute; inset:0; width:100%; height:100%;
+    transform:scaleX(-1);}
+
+  #hint{position:absolute; top:12px; left:0; right:0; text-align:center;
+    color:var(--sub); font-size:13px; pointer-events:none; padding:0 20px;}
+
+  #status{position:absolute; top:12px; inset-inline-start:12px; display:flex;
+    align-items:center; gap:6px; background:#00000090; padding:6px 10px;
+    border-radius:20px; font-size:12px; color:var(--sub);}
+  #status .dot{width:8px; height:8px; border-radius:50%; background:var(--sub);}
+  #status.live .dot{background:var(--orange); box-shadow:0 0 8px var(--orange);
+    animation:pulse 1.1s infinite;}
+  @keyframes pulse{0%,100%{opacity:1} 50%{opacity:.4}}
+
+  #timer{position:absolute; top:12px; inset-inline-end:12px; background:#00000090;
+    padding:6px 12px; border-radius:20px; font-size:13px; font-variant-numeric:tabular-nums;
+    display:none;}
+  #timer.show{display:block;}
+
+  #controls{flex-shrink:0; padding:18px 16px calc(18px + env(safe-area-inset-bottom));
+    display:flex; justify-content:center; gap:14px; background:var(--panel);
+    border-top:1px solid var(--line);}
+  button{font-family:inherit; border:none; cursor:pointer;}
+  #recordBtn{width:76px; height:76px; border-radius:50%; background:var(--orange);
+    display:flex; align-items:center; justify-content:center; box-shadow:0 0 0 4px #ffffff12;}
+  #recordBtn .inner{width:28px; height:28px; border-radius:8px; background:#000;
+    transition:.2s;}
+  #recordBtn.recording .inner{border-radius:6px; width:24px; height:24px; background:#000;}
+  #recordBtn:disabled{opacity:.4;}
+
+  #resultsWrap{position:absolute; inset:0; background:var(--bg); overflow-y:auto;
+    display:none; padding-bottom:24px;}
+  #resultsWrap.show{display:block;}
+  #resultsHeader{display:flex; align-items:center; gap:10px; padding:14px 16px;
+    border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5;}
+  #resultsHeader h2{font-size:16px; margin:0;}
+  #closeResults{margin-inline-start:auto; background:var(--panel2); color:var(--text);
+    border-radius:16px; padding:7px 14px; font-size:13px;}
+
+  #replayBox{position:relative; background:#000; margin:14px 16px 0; border-radius:14px;
+    overflow:hidden; aspect-ratio:9/16; max-height:38vh;}
+  #replayBox canvas{width:100%; height:100%;}
+  #replayBadge{position:absolute; top:10px; inset-inline-start:10px; background:var(--danger);
+    color:#fff; font-size:11px; font-weight:700; padding:3px 9px; border-radius:10px;
+    display:none;}
+  #replayBadge.show{display:block;}
+
+  .score-row{display:flex; gap:10px; padding:16px;}
+  .score-card{flex:1; background:var(--panel2); border-radius:14px; padding:14px;
+    text-align:center; border:1px solid var(--line);}
+  .score-card .big{font-size:26px; font-weight:800; color:var(--orange);}
+  .score-card .lbl{font-size:11px; color:var(--sub); margin-top:2px;}
+
+  #holdsList{padding:0 16px;}
+  #holdsList h3{font-size:13px; color:var(--sub); font-weight:600; margin:14px 0 8px;
+    text-transform:none;}
+  .hold-item{display:flex; align-items:center; gap:12px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:12px; padding:11px 13px; margin-bottom:8px;}
+  .hold-num{width:26px; height:26px; border-radius:50%; background:var(--orange);
+    color:#000; font-weight:800; font-size:13px; display:flex; align-items:center;
+    justify-content:center; flex-shrink:0;}
+  .hold-info{flex:1; min-width:0;}
+  .hold-info .t1{font-size:13.5px; font-weight:600;}
+  .hold-info .t2{font-size:11.5px; color:var(--sub); margin-top:1px;}
+  .stability-bar{width:56px; height:5px; border-radius:3px; background:var(--line);
+    overflow:hidden; flex-shrink:0;}
+  .stability-bar .fill{height:100%; background:var(--orange);}
+
+  #fallNote{margin:4px 16px 0; background:#2a1010; border:1px solid #4a1818;
+    color:#ff8080; border-radius:12px; padding:11px 13px; font-size:13px; display:none;}
+  #fallNote.show{display:block;}
+
+  #retryBtn{display:block; width:calc(100% - 32px); margin:18px 16px 0; padding:13px;
+    background:var(--orange); color:#000; font-weight:700; font-size:14.5px;
+    border-radius:12px;}
+
+  .empty-note{padding:40px 20px; text-align:center; color:var(--sub); font-size:13.5px;
+    line-height:1.6;}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <svg class="logo" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="200" cy="200" r="196" fill="#141414"/>
+      <circle cx="200" cy="200" r="190" fill="none" stroke="#ff6a00" stroke-width="6" opacity="0.9"/>
+      <g stroke="#f5f5f5" stroke-width="9" stroke-linecap="round" fill="none">
+        <path d="M195 165 L200 225"/>
+        <path d="M182 225 L218 225"/>
+        <path d="M195 175 L235 150 L272 112"/>
+        <path d="M195 185 L155 200 L128 178"/>
+        <path d="M200 225 L232 250 L250 275"/>
+        <path d="M182 225 L165 260 L148 298"/>
+      </g>
+      <g fill="#ff6a00">
+        <circle cx="272" cy="112" r="9"/>
+        <circle cx="128" cy="178" r="8"/>
+        <circle cx="250" cy="275" r="9"/>
+        <circle cx="148" cy="298" r="9"/>
+        <circle cx="195" cy="165" r="11"/>
+      </g>
+    </svg>
+    <h1>BoulderVision</h1>
+    <span class="tag">ניתוח בעיה בזמן אמת</span>
+  </header>
+
+  <div id="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="hint">מקמו את המצלמה כדי לראות את הגוף המלא על הקיר</div>
+    <div id="status"><span class="dot"></span><span id="statusText">ממתין למצלמה</span></div>
+    <div id="timer">00:00</div>
+  </div>
+
+  <div id="controls">
+    <button id="recordBtn" disabled><span class="inner"></span></button>
+  </div>
+
+  <div id="resultsWrap">
+    <div id="resultsHeader">
+      <h2>ניתוח הניסיון</h2>
+      <button id="closeResults">חזרה למצלמה</button>
+    </div>
+
+    <div id="replayBox">
+      <canvas id="replayCanvas"></canvas>
+      <span id="replayBadge">נפילה</span>
+    </div>
+
+    <div class="score-row">
+      <div class="score-card"><div class="big" id="scoreEfficiency">–</div><div class="lbl">ציון יעילות</div></div>
+      <div class="score-card"><div class="big" id="scoreHolds">–</div><div class="lbl">אחיזות זוהו</div></div>
+      <div class="score-card"><div class="big" id="scoreDuration">–</div><div class="lbl">משך ניסיון</div></div>
+    </div>
+
+    <div id="fallNote"></div>
+
+    <div id="holdsList">
+      <h3>פירוט אחיזות</h3>
+      <div id="holdsItems"></div>
+    </div>
+
+    <button id="retryBtn">נסיון נוסף</button>
+  </div>
+
+</div>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const video = document.getElementById('video');
+const overlay = document.getElementById('overlay');
+const octx = overlay.getContext('2d');
+const statusBox = document.getElementById('status');
+const statusText = document.getElementById('statusText');
+const hint = document.getElementById('hint');
+const timerEl = document.getElementById('timer');
+const recordBtn = document.getElementById('recordBtn');
+
+const resultsWrap = document.getElementById('resultsWrap');
+const closeResults = document.getElementById('closeResults');
+const retryBtn = document.getElementById('retryBtn');
+const replayCanvas = document.getElementById('replayCanvas');
+const rctx = replayCanvas.getContext('2d');
+const replayBadge = document.getElementById('replayBadge');
+const holdsItems = document.getElementById('holdsItems');
+const scoreEfficiency = document.getElementById('scoreEfficiency');
+const scoreHolds = document.getElementById('scoreHolds');
+const scoreDuration = document.getElementById('scoreDuration');
+const fallNote = document.getElementById('fallNote');
+
+let landmarker = null;
+let running = false;
+let recording = false;
+let recordStart = 0;
+let rafId = null;
+
+// buffer of {t, landmarks}
+let buffer = [];
+let fallDetected = false;
+let fallFrameIndex = -1;
+
+// tracked points for hold/trajectory logic (indices into MediaPipe Pose landmarks)
+const L = { LW:15, RW:16, LA:27, RA:28, LH:23, RH:24, LS:11, RS:12 };
+
+// per-limb still-tracking state, used only while recording
+let stillState = {};
+const LIMB_KEYS = ['LW','RW','LA','RA'];
+
+function resetStillState(){
+  stillState = {};
+  LIMB_KEYS.forEach(k => stillState[k] = { stillSince:null, active:false, path:[] });
+}
+
+const STILL_SPEED_THRESH = 0.012;   // normalized coords / sec
+const STILL_MIN_DURATION = 0.55;    // seconds to count as a hold
+const FALL_VEL_THRESH = 0.9;        // normalized units/sec downward, hips
+const FALL_MIN_GAP = 1.2;           // seconds between fall checks after trigger
+
+let holds = []; // { limb, start, end, points:[{x,y,t}] }
+const TRAJ_IDS = [0,11,12,13,14,15,16,23,24,25,26,27,28]; // head, shoulders, elbows, wrists, hips, knees, ankles
+let jointTrajectories = {}; // id -> [{x,y,t}]
+function resetTrajectories(){
+  jointTrajectories = {};
+  TRAJ_IDS.forEach(id => jointTrajectories[id] = []);
+}
+
+async function init(){
+  statusText.textContent = 'טוען מודל...';
+  const filesetResolver = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  landmarker = await PoseLandmarker.createFromOptions(filesetResolver, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numPoses: 1
+  });
+
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:'environment', width:{ideal:1280}, height:{ideal:720} },
+      audio:false
+    });
+    video.srcObject = stream;
+    await video.play();
+    statusText.textContent = 'מוכן';
+    recordBtn.disabled = false;
+    resizeCanvas();
+    running = true;
+    loop();
+  }catch(e){
+    statusText.textContent = 'אין גישה למצלמה';
+  }
+}
+
+function resizeCanvas(){
+  overlay.width = video.videoWidth || video.clientWidth;
+  overlay.height = video.videoHeight || video.clientHeight;
+}
+video.addEventListener('loadedmetadata', resizeCanvas);
+window.addEventListener('resize', resizeCanvas);
+
+const CONNECTIONS = [
+  [11,12],[11,23],[12,24],[23,24],
+  [11,13],[13,15],[12,14],[14,16],
+  [23,25],[25,27],[24,26],[26,28],
+  [27,31],[28,32],
+  [15,17],[15,19],[16,18],[16,20]
+];
+const CHIP_IDS = [15,16,27,28,23,24,11,12,13,14,25,26];
+
+function drawSkeleton(ctx, lm, w, h, opts={}){
+  ctx.strokeStyle = opts.boneColor || 'rgba(245,245,245,0.95)';
+  ctx.lineWidth = opts.lineWidth || 3.5;
+  ctx.lineCap = 'round';
+  CONNECTIONS.forEach(([a,b])=>{
+    const pa = lm[a], pb = lm[b];
+    if(!pa || !pb) return;
+    ctx.beginPath();
+    ctx.moveTo(pa.x*w, pa.y*h);
+    ctx.lineTo(pb.x*w, pb.y*h);
+    ctx.stroke();
+  });
+  CHIP_IDS.forEach(id=>{
+    const p = lm[id];
+    if(!p) return;
+    ctx.beginPath();
+    ctx.arc(p.x*w, p.y*h, opts.chipR || 5, 0, Math.PI*2);
+    ctx.fillStyle = '#f5f5f5';
+    ctx.fill();
+  });
+}
+
+function drawHighlightRing(ctx, p, w, h, color){
+  ctx.beginPath();
+  ctx.arc(p.x*w, p.y*h, 11, 0, Math.PI*2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+}
+
+function drawTrajectory(ctx, pts, w, h, opts={}){
+  if(pts.length < 2) return;
+  ctx.beginPath();
+  ctx.setLineDash([2,7]);
+  ctx.strokeStyle = opts.color || 'rgba(255,106,0,0.5)';
+  ctx.lineWidth = opts.lineWidth || 1.6;
+  pts.forEach((p,i)=>{
+    const x = p.x*w, y = p.y*h;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawAllTrajectories(ctx, trajMap, w, h, opts={}){
+  TRAJ_IDS.forEach(id=>{
+    const pts = trajMap[id];
+    if(pts && pts.length > 1) drawTrajectory(ctx, pts, w, h, opts);
+  });
+}
+
+function centerOfMass(lm){
+  const ids = [11,12,23,24];
+  let x=0,y=0,n=0;
+  ids.forEach(id=>{ if(lm[id]){ x+=lm[id].x; y+=lm[id].y; n++; } });
+  return n? {x:x/n, y:y/n} : null;
+}
+
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+let lastCOM = null;
+let lastCOMTime = 0;
+let lastFallCheckTime = 0;
+
+function processFrame(lm, t){
+  // per-joint trajectory: head, shoulders, elbows, wrists, hips, knees, ankles
+  TRAJ_IDS.forEach(id=>{
+    const p = lm[id];
+    if(p) jointTrajectories[id].push({x:p.x, y:p.y, t});
+  });
+
+  // fall detection via vertical velocity of hip/shoulder center (not drawn)
+  const com = centerOfMass(lm);
+  if(com){
+    if(lastCOM && (t - lastCOMTime) > 0){
+      const vy = (com.y - lastCOM.y) / (t - lastCOMTime);
+      if(vy > FALL_VEL_THRESH && !fallDetected && (t - lastFallCheckTime) > FALL_MIN_GAP){
+        fallDetected = true;
+        fallFrameIndex = buffer.length;
+        lastFallCheckTime = t;
+      }
+    }
+    lastCOM = com;
+    lastCOMTime = t;
+  }
+
+  // still / hold detection per limb
+  LIMB_KEYS.forEach(key=>{
+    const idx = L[key];
+    const p = lm[idx];
+    const st = stillState[key];
+    if(!p || !st) return;
+    st.path.push({x:p.x, y:p.y, t});
+    // keep last ~0.4s of samples to measure speed
+    while(st.path.length > 2 && t - st.path[0].t > 0.4) st.path.shift();
+    let speed = 0;
+    if(st.path.length >= 2){
+      const a = st.path[0], b = st.path[st.path.length-1];
+      const dt = b.t - a.t;
+      if(dt > 0) speed = dist(a,b)/dt;
+    }
+    if(speed < STILL_SPEED_THRESH){
+      if(st.stillSince === null) st.stillSince = t;
+      if(!st.active && (t - st.stillSince) >= STILL_MIN_DURATION){
+        st.active = true;
+        st.holdStart = st.stillSince;
+        st.holdPoints = [{x:p.x,y:p.y,t}];
+      } else if(st.active){
+        st.holdPoints.push({x:p.x,y:p.y,t});
+      }
+    } else {
+      if(st.active){
+        // close out the hold
+        holds.push({
+          limb:key, start:st.holdStart, end:t, points: st.holdPoints
+        });
+      }
+      st.stillSince = null;
+      st.active = false;
+      st.holdPoints = [];
+    }
+  });
+}
+
+function finalizeOpenHolds(t){
+  LIMB_KEYS.forEach(key=>{
+    const st = stillState[key];
+    if(st && st.active){
+      holds.push({ limb:key, start:st.holdStart, end:t, points: st.holdPoints });
+    }
+  });
+}
+
+function loop(){
+  if(!running) return;
+  const now = video.currentTime;
+  if(landmarker && video.readyState >= 2){
+    const result = landmarker.detectForVideo(video, performance.now());
+    octx.clearRect(0,0,overlay.width, overlay.height);
+    if(result.landmarks && result.landmarks[0]){
+      const lm = result.landmarks[0];
+      drawSkeleton(octx, lm, overlay.width, overlay.height);
+
+      if(recording){
+        const t = performance.now()/1000 - recordStart;
+        buffer.push({t, lm});
+        processFrame(lm, t);
+
+        // draw per-joint trajectories + still-ring highlights live
+        drawAllTrajectories(octx, jointTrajectories, overlay.width, overlay.height);
+        LIMB_KEYS.forEach(key=>{
+          const st = stillState[key];
+          if(st && st.active){
+            const p = lm[L[key]];
+            if(p) drawHighlightRing(octx, p, overlay.width, overlay.height, '#ff6a00');
+          }
+        });
+
+        if(fallDetected && fallFrameIndex === buffer.length - 1){
+          stopRecording(true);
+        }
+        timerEl.textContent = formatTime(t);
+      }
+    }
+  }
+  rafId = requestAnimationFrame(loop);
+}
+
+function formatTime(s){
+  const m = Math.floor(s/60).toString().padStart(2,'0');
+  const ss = Math.floor(s%60).toString().padStart(2,'0');
+  return `${m}:${ss}`;
+}
+
+function startRecording(){
+  buffer = [];
+  holds = [];
+  resetTrajectories();
+  fallDetected = false;
+  fallFrameIndex = -1;
+  lastCOM = null;
+  resetStillState();
+  recordStart = performance.now()/1000;
+  recording = true;
+  recordBtn.classList.add('recording');
+  statusBox.classList.add('live');
+  statusText.textContent = 'מקליט';
+  timerEl.classList.add('show');
+  hint.style.display = 'none';
+}
+
+function stopRecording(auto=false){
+  if(!recording) return;
+  recording = false;
+  const t = performance.now()/1000 - recordStart;
+  finalizeOpenHolds(t);
+  recordBtn.classList.remove('recording');
+  statusBox.classList.remove('live');
+  statusText.textContent = 'מוכן';
+  timerEl.classList.remove('show');
+  showResults(t);
+}
+
+recordBtn.addEventListener('click', ()=>{
+  if(!recording) startRecording();
+  else stopRecording(false);
+});
+
+closeResults.addEventListener('click', ()=>{
+  resultsWrap.classList.remove('show');
+  hint.style.display = 'block';
+});
+retryBtn.addEventListener('click', ()=>{
+  resultsWrap.classList.remove('show');
+  hint.style.display = 'block';
+});
+
+function stabilityScore(pts){
+  // lower positional variance during hold = higher stability
+  if(pts.length < 2) return 1;
+  let mx=0,my=0;
+  pts.forEach(p=>{mx+=p.x; my+=p.y;});
+  mx/=pts.length; my/=pts.length;
+  let variance=0;
+  pts.forEach(p=>{ variance += (p.x-mx)**2 + (p.y-my)**2; });
+  variance /= pts.length;
+  const jitter = Math.sqrt(variance);
+  const score = Math.max(0, Math.min(1, 1 - jitter*60));
+  return score;
+}
+
+const LIMB_LABELS = { LW:'יד שמאל', RW:'יד ימין', LA:'רגל שמאל', RA:'רגל ימין' };
+
+function showResults(totalDuration){
+  holdsItems.innerHTML = '';
+  const sorted = holds.slice().sort((a,b)=>a.start-b.start);
+
+  let totalStability = 0;
+  sorted.forEach((h,i)=>{
+    const dur = h.end - h.start;
+    const stab = stabilityScore(h.points);
+    totalStability += stab;
+
+    const item = document.createElement('div');
+    item.className = 'hold-item';
+    item.innerHTML = `
+      <div class="hold-num">${i+1}</div>
+      <div class="hold-info">
+        <div class="t1">${LIMB_LABELS[h.limb]} · ${dur.toFixed(1)} שנ'</div>
+        <div class="t2">יציבות ${(stab*100).toFixed(0)}%</div>
+      </div>
+      <div class="stability-bar"><div class="fill" style="width:${(stab*100).toFixed(0)}%"></div></div>
+    `;
+    holdsItems.appendChild(item);
+  });
+
+  if(sorted.length === 0){
+    holdsItems.innerHTML = `<div class="empty-note">לא זוהו אחיזות סטטיות בניסיון הזה — נסו ניסיון עם עצירות ברורות יותר.</div>`;
+  }
+
+  const avgStability = sorted.length ? totalStability/sorted.length : 0.5;
+  const efficiency = Math.round(avgStability * 100);
+
+  scoreEfficiency.textContent = sorted.length ? efficiency : '–';
+  scoreHolds.textContent = sorted.length;
+  scoreDuration.textContent = formatTime(totalDuration);
+
+  if(fallDetected){
+    fallNote.classList.add('show');
+    fallNote.textContent = `זוהתה נפילה בשנייה ${buffer[fallFrameIndex] ? buffer[fallFrameIndex].t.toFixed(1) : '?'} — ההקלטה נעצרה אוטומטית.`;
+  } else {
+    fallNote.classList.remove('show');
+  }
+
+  drawReplay();
+  resultsWrap.classList.add('show');
+}
+
+function drawReplay(){
+  const w = replayCanvas.clientWidth * devicePixelRatio;
+  const h = replayCanvas.clientHeight * devicePixelRatio;
+  replayCanvas.width = w;
+  replayCanvas.height = h;
+  rctx.fillStyle = '#000';
+  rctx.fillRect(0,0,w,h);
+
+  if(buffer.length === 0) return;
+
+  // choose the "straightest" / most representative frame: prefer just before fall,
+  // otherwise the frame with the median COM height
+  let frame;
+  if(fallDetected && fallFrameIndex > 3){
+    frame = buffer[fallFrameIndex - 3];
+    replayBadge.classList.add('show');
+  } else {
+    frame = buffer[Math.floor(buffer.length/2)];
+    replayBadge.classList.remove('show');
+  }
+
+  const trimmed = {};
+  TRAJ_IDS.forEach(id=>{
+    trimmed[id] = (jointTrajectories[id] || []).filter(p => p.t <= frame.t);
+  });
+  drawAllTrajectories(rctx, trimmed, w, h, {lineWidth:2});
+  drawSkeleton(rctx, frame.lm, w, h, {lineWidth:4, chipR:6});
+}
+
+init();
+</script>
+</body>
+</html>
