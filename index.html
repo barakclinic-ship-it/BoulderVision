@@ -130,6 +130,11 @@
     color:#ff8080; border-radius:12px; padding:11px 13px; font-size:13px; display:none;}
   #fallNote.show{display:block;}
 
+  #colorHoldsNote{margin:4px 16px 0; background:var(--panel2); border:1px solid var(--line);
+    color:var(--sub); border-radius:12px; padding:11px 13px; font-size:12.5px; line-height:1.5;
+    display:none;}
+  #colorHoldsNote.show{display:block;}
+
   #retryBtn{display:block; width:calc(100% - 32px); margin:18px 16px 0; padding:13px;
     background:var(--orange); color:#000; font-weight:700; font-size:14.5px;
     border-radius:12px;}
@@ -187,11 +192,12 @@
     </div>
 
     <div class="score-row">
-      <div class="score-card"><div class="big" id="scoreEfficiency">–</div><div class="lbl">ציון יעילות</div></div>
-      <div class="score-card"><div class="big" id="scoreHolds">–</div><div class="lbl">אחיזות זוהו</div></div>
+      <div class="score-card"><div class="big" id="scoreEfficiency">–</div><div class="lbl">עלייה אנכית</div></div>
+      <div class="score-card"><div class="big" id="scoreHolds">–</div><div class="lbl">עצירות זוהו</div></div>
       <div class="score-card"><div class="big" id="scoreDuration">–</div><div class="lbl">משך ניסיון</div></div>
     </div>
 
+    <div id="colorHoldsNote"></div>
     <div id="fallNote"></div>
 
     <div id="holdsList">
@@ -227,6 +233,7 @@ const scoreEfficiency = document.getElementById('scoreEfficiency');
 const scoreHolds = document.getElementById('scoreHolds');
 const scoreDuration = document.getElementById('scoreDuration');
 const fallNote = document.getElementById('fallNote');
+const colorHoldsNote = document.getElementById('colorHoldsNote');
 
 let landmarker = null;
 let running = false;
@@ -264,6 +271,147 @@ const FALL_VEL_THRESH = 0.9;        // normalized units/sec downward, hips
 const FALL_MIN_GAP = 1.2;           // seconds between fall checks after trigger
 
 let holds = []; // { limb, start, end, points:[{x,y,t}] }
+
+function holdCentroid(h){
+  let x=0,y=0;
+  h.points.forEach(p=>{x+=p.x; y+=p.y;});
+  return { x:x/h.points.length, y:y/h.points.length };
+}
+
+// draws a numbered marker at each hold's contact point (where hand/foot paused) — not color-based
+function drawContactMarkers(ctx, holdsList, w, h, opts={}){
+  holdsList.forEach((hh, i)=>{
+    const c = holdCentroid(hh);
+    const cx = c.x*w, cy = c.y*h;
+    ctx.beginPath();
+    ctx.arc(cx, cy, opts.r || 12, 0, Math.PI*2);
+    ctx.strokeStyle = opts.color || 'rgba(13,178,253,0.9)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = opts.textColor || 'rgba(13,178,253,0.95)';
+    ctx.font = `${opts.fontSize || 11}px -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(i+1), cx, cy);
+  });
+}
+
+let wallBlobs = []; // all detected colorful/triangular features on the wall, from one reference frame
+
+function detectColorBlobs(sourceEl, fullW, fullH){
+  if(!fullW || !fullH) return [];
+  const DW = 110;
+  const DH = Math.max(1, Math.round(DW * fullH / fullW));
+  const tmp = document.createElement('canvas');
+  tmp.width = DW; tmp.height = DH;
+  const tctx = tmp.getContext('2d', {willReadFrequently:true});
+  let data;
+  try{
+    tctx.drawImage(sourceEl, 0, 0, DW, DH);
+    data = tctx.getImageData(0, 0, DW, DH).data;
+  }catch(e){ return []; }
+
+  const mask = new Uint8Array(DW*DH);
+  for(let i=0;i<DW*DH;i++){
+    const r=data[i*4], g=data[i*4+1], b=data[i*4+2];
+    const max=Math.max(r,g,b), min=Math.min(r,g,b);
+    const v = max/255, s = max===0 ? 0 : (max-min)/max;
+    if(s > 0.40 && v > 0.25 && v < 0.98) mask[i] = 1;
+  }
+
+  const visited = new Uint8Array(DW*DH);
+  const blobs = [];
+  for(let y=0;y<DH;y++){
+    for(let x=0;x<DW;x++){
+      const idx = y*DW+x;
+      if(!mask[idx] || visited[idx]) continue;
+      const stack = [idx];
+      visited[idx] = 1;
+      let minX=x,maxX=x,minY=y,maxY=y,count=0,sr=0,sg=0,sb=0;
+      while(stack.length){
+        const cur = stack.pop();
+        const cx = cur % DW, cy = (cur / DW) | 0;
+        count++; sr+=data[cur*4]; sg+=data[cur*4+1]; sb+=data[cur*4+2];
+        if(cx<minX)minX=cx; if(cx>maxX)maxX=cx;
+        if(cy<minY)minY=cy; if(cy>maxY)maxY=cy;
+        if(cx>0 && mask[cur-1] && !visited[cur-1]){ visited[cur-1]=1; stack.push(cur-1); }
+        if(cx<DW-1 && mask[cur+1] && !visited[cur+1]){ visited[cur+1]=1; stack.push(cur+1); }
+        if(cur-DW>=0 && mask[cur-DW] && !visited[cur-DW]){ visited[cur-DW]=1; stack.push(cur-DW); }
+        if(cur+DW<DW*DH && mask[cur+DW] && !visited[cur+DW]){ visited[cur+DW]=1; stack.push(cur+DW); }
+      }
+      if(count >= 3){
+        const bw = maxX-minX+1, bh = maxY-minY+1;
+        const fillRatio = count/(bw*bh);
+        const shape = (fillRatio >= 0.38 && fillRatio <= 0.63) ? 'triangleish' : 'blob';
+        blobs.push({
+          x:(minX+maxX)/2/DW, y:(minY+maxY)/2/DH,
+          w:bw/DW, h:bh/DH,
+          r:Math.round(sr/count), g:Math.round(sg/count), b:Math.round(sb/count),
+          area:count, shape
+        });
+      }
+    }
+  }
+  blobs.sort((a,b)=>b.area-a.area);
+  return blobs.slice(0, 60);
+}
+
+// after a climb: find which wall blobs were actually touched, then flag other blobs
+// with a closely matching color as likely-same-route holds too
+function matchWallFeatures(){
+  const touched = new Set();
+  holds.forEach(hh=>{
+    const c = holdCentroid(hh);
+    let best=-1, bestDist=Infinity;
+    wallBlobs.forEach((b,i)=>{
+      const d = Math.hypot(b.x-c.x, b.y-c.y);
+      if(d < bestDist){ bestDist=d; best=i; }
+    });
+    if(best>=0 && bestDist < 0.07) touched.add(best);
+  });
+  const sameColor = new Set();
+  touched.forEach(ti=>{
+    const tb = wallBlobs[ti];
+    wallBlobs.forEach((b,i)=>{
+      if(touched.has(i) || sameColor.has(i)) return;
+      const colorDist = Math.sqrt((b.r-tb.r)**2 + (b.g-tb.g)**2 + (b.b-tb.b)**2);
+      if(colorDist < 38) sameColor.add(i);
+    });
+  });
+  return { touched, sameColor };
+}
+
+// draws wall features: confirmed touches (solid), same-color matches (dashed),
+// and any triangular-shaped feature regardless of touch/color (dashed, dimmer)
+function drawWallFeatures(ctx, blobs, touched, sameColor, w, h){
+  blobs.forEach((b,i)=>{
+    const isTouched = touched.has(i);
+    const isSame = sameColor.has(i);
+    const isTri = b.shape === 'triangleish';
+    if(!isTouched && !isSame && !isTri) return;
+
+    const cx = b.x*w, cy = b.y*h;
+    const rad = Math.max(9, Math.min(w,h) * Math.max(b.w,b.h) * 0.55);
+    ctx.beginPath();
+    if(isTri){
+      ctx.moveTo(cx, cy-rad);
+      ctx.lineTo(cx-rad*0.87, cy+rad*0.5);
+      ctx.lineTo(cx+rad*0.87, cy+rad*0.5);
+      ctx.closePath();
+    } else {
+      ctx.arc(cx, cy, rad, 0, Math.PI*2);
+    }
+    let opacity = 0.4, dash = [3,4], lineWidth = 1.6;
+    if(isTouched){ opacity = 1; dash = []; lineWidth = 2.5; }
+    else if(isSame){ opacity = 0.75; dash = [2,3]; lineWidth = 2; }
+    ctx.setLineDash(dash);
+    ctx.strokeStyle = `rgba(${b.r},${b.g},${b.b},${opacity})`;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+}
+
 const TRAJ_IDS = [0,11,12,13,14,15,16,23,24,25,26,27,28]; // head, shoulders, elbows, wrists, hips, knees, ankles
 let jointTrajectories = {}; // id -> [{x,y,t}]
 function resetTrajectories(){
@@ -362,6 +510,19 @@ function drawTrajectory(ctx, pts, w, h, opts={}){
   });
   ctx.stroke();
   ctx.setLineDash([]);
+
+  // chip dots along the path, sampled at a fixed time interval
+  const chipGap = opts.chipGapSeconds || 0.35;
+  let lastChipT = pts[0].t;
+  ctx.fillStyle = opts.chipColor || 'rgba(13,178,253,0.8)';
+  pts.forEach(p=>{
+    if(p.t - lastChipT >= chipGap){
+      ctx.beginPath();
+      ctx.arc(p.x*w, p.y*h, opts.chipDotR || 2, 0, Math.PI*2);
+      ctx.fill();
+      lastChipT = p.t;
+    }
+  });
 }
 
 function drawAllTrajectories(ctx, trajMap, w, h, opts={}){
@@ -455,34 +616,39 @@ function finalizeOpenHolds(t){
 
 function loop(){
   if(!running) return;
-  const now = video.currentTime;
   if(landmarker && video.readyState >= 2){
-    const result = landmarker.detectForVideo(video, performance.now());
-    octx.clearRect(0,0,overlay.width, overlay.height);
-    if(result.landmarks && result.landmarks[0]){
-      const lm = result.landmarks[0];
-      drawSkeleton(octx, lm, overlay.width, overlay.height);
+    try{
+      const result = landmarker.detectForVideo(video, performance.now());
+      octx.clearRect(0,0,overlay.width, overlay.height);
+      drawWallFeatures(octx, wallBlobs, new Set(), new Set(), overlay.width, overlay.height);
+      drawContactMarkers(octx, holds, overlay.width, overlay.height);
+      if(result.landmarks && result.landmarks[0]){
+        const lm = result.landmarks[0];
+        drawSkeleton(octx, lm, overlay.width, overlay.height);
 
-      if(recording){
-        const t = performance.now()/1000 - recordStart;
-        buffer.push({t, lm});
-        processFrame(lm, t);
+        if(recording){
+          const t = performance.now()/1000 - recordStart;
+          buffer.push({t, lm});
+          processFrame(lm, t);
 
-        // draw per-joint trajectories + still-ring highlights live
-        drawAllTrajectories(octx, jointTrajectories, overlay.width, overlay.height);
-        LIMB_KEYS.forEach(key=>{
-          const st = stillState[key];
-          if(st && st.active){
-            const p = lm[L[key]];
-            if(p) drawHighlightRing(octx, p, overlay.width, overlay.height, '#0DB2FD');
+          // draw per-joint trajectories + still-ring highlights live
+          drawAllTrajectories(octx, jointTrajectories, overlay.width, overlay.height);
+          LIMB_KEYS.forEach(key=>{
+            const st = stillState[key];
+            if(st && st.active){
+              const p = lm[L[key]];
+              if(p) drawHighlightRing(octx, p, overlay.width, overlay.height, '#0DB2FD');
+            }
+          });
+
+          if(fallDetected && fallFrameIndex === buffer.length - 1){
+            stopRecording(true);
           }
-        });
-
-        if(fallDetected && fallFrameIndex === buffer.length - 1){
-          stopRecording(true);
+          timerEl.textContent = formatTime(t);
         }
-        timerEl.textContent = formatTime(t);
       }
+    }catch(err){
+      console.warn('live frame error', err);
     }
   }
   rafId = requestAnimationFrame(loop);
@@ -502,6 +668,7 @@ function startRecording(){
   fallFrameIndex = -1;
   lastCOM = null;
   resetStillState();
+  wallBlobs = detectColorBlobs(video, overlay.width, overlay.height);
   recordStart = performance.now()/1000;
   recording = true;
   recordBtn.classList.add('recording');
@@ -566,6 +733,8 @@ async function analyzeUploadedFile(file){
   statusText.textContent = 'מנתח סרטון...';
 
   try{ await video.play(); }catch(e){}
+  await new Promise(res => requestAnimationFrame(res));
+  wallBlobs = detectColorBlobs(video, overlay.width, overlay.height);
 
   let finished = false;
 
@@ -598,19 +767,26 @@ async function analyzeUploadedFile(file){
   function analyzeStep(){
     if(finished) return;
     if(video.paused || video.ended){ finalizeAnalysis(); return; }
+    if(video.readyState < 2){ requestAnimationFrame(analyzeStep); return; }
     const t = video.currentTime;
-    const result = landmarker.detectForVideo(video, Math.round(t*1000)+1);
-    octx.clearRect(0,0,overlay.width, overlay.height);
-    if(result.landmarks && result.landmarks[0]){
-      const lm = result.landmarks[0];
-      drawSkeleton(octx, lm, overlay.width, overlay.height);
-      buffer.push({t, lm});
-      processFrame(lm, t);
-      drawAllTrajectories(octx, jointTrajectories, overlay.width, overlay.height);
-      if(fallDetected && fallFrameIndex === buffer.length - 1){
-        finalizeAnalysis();
-        return;
+    try{
+      const result = landmarker.detectForVideo(video, Math.round(t*1000)+1);
+      octx.clearRect(0,0,overlay.width, overlay.height);
+      drawWallFeatures(octx, wallBlobs, new Set(), new Set(), overlay.width, overlay.height);
+      drawContactMarkers(octx, holds, overlay.width, overlay.height);
+      if(result.landmarks && result.landmarks[0]){
+        const lm = result.landmarks[0];
+        drawSkeleton(octx, lm, overlay.width, overlay.height);
+        buffer.push({t, lm});
+        processFrame(lm, t);
+        drawAllTrajectories(octx, jointTrajectories, overlay.width, overlay.height);
+        if(fallDetected && fallFrameIndex === buffer.length - 1){
+          finalizeAnalysis();
+          return;
+        }
       }
+    }catch(err){
+      console.warn('frame analysis error', err);
     }
     progressBar.style.width = `${Math.min(100, Math.round((t/(duration||1))*100))}%`;
     requestAnimationFrame(analyzeStep);
@@ -645,15 +821,35 @@ function stabilityScore(pts){
 
 const LIMB_LABELS = { LW:'יד שמאל', RW:'יד ימין', LA:'רגל שמאל', RA:'רגל ימין' };
 
+function verticalRangePercent(){
+  if(!buffer.length) return 0;
+  let minY = 1, maxY = 0;
+  buffer.forEach(f=>{
+    const lh = f.lm[23], rh = f.lm[24];
+    if(lh && rh){
+      const y = (lh.y + rh.y) / 2;
+      if(y < minY) minY = y;
+      if(y > maxY) maxY = y;
+    }
+  });
+  return Math.max(0, Math.round((maxY - minY) * 100));
+}
+
+let matchedTouched = new Set();
+let matchedSameColor = new Set();
+
 function showResults(totalDuration){
+  const match = matchWallFeatures();
+  matchedTouched = match.touched;
+  matchedSameColor = match.sameColor;
+
   holdsItems.innerHTML = '';
   const sorted = holds.slice().sort((a,b)=>a.start-b.start);
 
-  let totalStability = 0;
   sorted.forEach((h,i)=>{
     const dur = h.end - h.start;
     const stab = stabilityScore(h.points);
-    totalStability += stab;
+    const movement = Math.round((1-stab)*100);
 
     const item = document.createElement('div');
     item.className = 'hold-item';
@@ -661,23 +857,29 @@ function showResults(totalDuration){
       <div class="hold-num">${i+1}</div>
       <div class="hold-info">
         <div class="t1">${LIMB_LABELS[h.limb]} · ${dur.toFixed(1)} שנ'</div>
-        <div class="t2">יציבות ${(stab*100).toFixed(0)}%</div>
+        <div class="t2">תנודתיות באחיזה: ${movement}%</div>
       </div>
-      <div class="stability-bar"><div class="fill" style="width:${(stab*100).toFixed(0)}%"></div></div>
+      <div class="stability-bar"><div class="fill" style="width:${movement}%"></div></div>
     `;
     holdsItems.appendChild(item);
   });
 
   if(sorted.length === 0){
-    holdsItems.innerHTML = `<div class="empty-note">לא זוהו אחיזות סטטיות בניסיון הזה — נסו ניסיון עם עצירות ברורות יותר.</div>`;
+    holdsItems.innerHTML = `<div class="empty-note">לא זוהו עצירות ברורות של יד/רגל בניסיון הזה — נסו ניסיון עם עצירות ברורות יותר על כל אחיזה.</div>`;
   }
 
-  const avgStability = sorted.length ? totalStability/sorted.length : 0.5;
-  const efficiency = Math.round(avgStability * 100);
-
-  scoreEfficiency.textContent = sorted.length ? efficiency : '–';
+  scoreEfficiency.textContent = verticalRangePercent() + '%';
   scoreHolds.textContent = sorted.length;
   scoreDuration.textContent = formatTime(totalDuration);
+
+  const triCount = wallBlobs.filter(b=>b.shape==='triangleish').length;
+  const sameColorCount = matchedSameColor.size;
+  if(sorted.length || triCount){
+    colorHoldsNote.classList.add('show');
+    colorHoldsNote.textContent = `העיגולים הממוספרים הם המגעים בפועל של היד/רגל. קווים רציפים סביב תבנית = אחיזה שנגעת בה; קו מקווקו בצבע זהה = אחיזה אחרת באותו צבע בדיוק שכנראה שייכת לאותו מסלול (לא ודאי); כל תבנית משולשת על הקיר מסומנת גם אם לא נגעו בה ולא הותאם צבעה — כי לא ניתן לדעת קושי או שימוש בפועל, רק צורה.`;
+  } else {
+    colorHoldsNote.classList.remove('show');
+  }
 
   if(fallDetected){
     fallNote.classList.add('show');
@@ -716,6 +918,9 @@ function drawReplay(){
     trimmed[id] = (jointTrajectories[id] || []).filter(p => p.t <= frame.t);
   });
   drawAllTrajectories(rctx, trimmed, w, h, {lineWidth:2});
+  drawWallFeatures(rctx, wallBlobs, matchedTouched, matchedSameColor, w, h);
+  const sortedHolds = holds.slice().sort((a,b)=>a.start-b.start).filter(hh=>hh.start <= frame.t);
+  drawContactMarkers(rctx, sortedHolds, w, h, {r:14, fontSize:13});
   drawSkeleton(rctx, frame.lm, w, h, {lineWidth:4, chipR:6});
 }
 
