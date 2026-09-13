@@ -211,7 +211,7 @@
     </div>
 
     <div class="score-row">
-      <div class="score-card"><div class="big" id="scoreEfficiency">–</div><div class="lbl">עלייה אנכית</div></div>
+      <div class="score-card"><div class="big" id="scoreEfficiency">–</div><div class="lbl">מרחק תנועה (יד+רגל)</div></div>
       <div class="score-card"><div class="big" id="scoreHolds">–</div><div class="lbl">עצירות זוהו</div></div>
       <div class="score-card"><div class="big" id="scoreDuration">–</div><div class="lbl">משך ניסיון</div></div>
     </div>
@@ -900,6 +900,20 @@ function verticalRangePercent(){
   return Math.max(0, Math.round((maxY - minY) * 100));
 }
 
+// total distance traveled by hands+feet along their tracked paths, as % of frame height —
+// a direct, dry readout of how much the limbs actually moved (ties to the trajectory lines)
+function totalLimbTravelPercent(){
+  const limbIds = [15,16,27,28]; // wrists, ankles
+  let total = 0;
+  limbIds.forEach(id=>{
+    const pts = jointTrajectories[id] || [];
+    for(let i=1;i<pts.length;i++){
+      total += dist(pts[i-1], pts[i]);
+    }
+  });
+  return Math.round(total * 100);
+}
+
 let matchedTouched = new Set();
 let matchedSameColor = new Set();
 
@@ -933,7 +947,7 @@ function showResults(totalDuration){
     holdsItems.innerHTML = `<div class="empty-note">לא זוהו עצירות ברורות של יד/רגל בניסיון הזה — נסו ניסיון עם עצירות ברורות יותר על כל אחיזה.</div>`;
   }
 
-  scoreEfficiency.textContent = verticalRangePercent() + '%';
+  scoreEfficiency.textContent = totalLimbTravelPercent() + '%';
   scoreHolds.textContent = sorted.length;
   scoreDuration.textContent = formatTime(totalDuration);
 
@@ -953,8 +967,8 @@ function showResults(totalDuration){
     fallNote.classList.remove('show');
   }
 
-  startReplayPlayback();
   resultsWrap.classList.add('show');
+  startReplayPlayback();
 }
 
 const scrubPlayBtn = document.getElementById('scrubPlayBtn');
