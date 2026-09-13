@@ -44,7 +44,11 @@
 
   #stage{position:relative; flex:1; min-height:0; background:#000; overflow:hidden;}
   video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
-  canvas#overlay{position:absolute; inset:0; width:100%; height:100%;}
+  canvas#overlay{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
+
+  @media (min-width:820px){
+    video, canvas#overlay{ object-fit:contain; }
+  }
   video.mirrored, canvas#overlay.mirrored{transform:scaleX(-1);}
 
   #hint{position:absolute; top:12px; left:0; right:0; text-align:center;
@@ -542,8 +546,6 @@ async function analyzeUploadedFile(file){
   recordBtn.disabled = true;
   uploadBtn.disabled = true;
   hint.style.display = 'none';
-  video.classList.remove('mirrored');
-  overlay.classList.remove('mirrored');
   progressWrap.classList.add('show');
   statusBox.classList.add('live');
   statusText.textContent = 'טוען סרטון...';
@@ -561,16 +563,42 @@ async function analyzeUploadedFile(file){
   resetStillState();
 
   const duration = video.duration || 0;
-  const step = 1/15;
-  let t = 0;
+  statusText.textContent = 'מנתח סרטון...';
 
-  while(t <= duration){
-    video.currentTime = Math.min(t, duration);
-    await new Promise(res=>{
-      const onSeeked = ()=>{ video.removeEventListener('seeked', onSeeked); res(); };
-      video.addEventListener('seeked', onSeeked);
-    });
+  try{ await video.play(); }catch(e){}
 
+  let finished = false;
+
+  function finalizeAnalysis(){
+    if(finished) return;
+    finished = true;
+    const t = video.currentTime;
+    finalizeOpenHolds(t);
+    progressWrap.classList.remove('show');
+    progressBar.style.width = '0%';
+    statusBox.classList.remove('live');
+    statusText.textContent = 'מוכן';
+    URL.revokeObjectURL(url);
+
+    video.pause();
+    video.removeEventListener('ended', finalizeAnalysis);
+    video.src = '';
+    video.srcObject = cameraStream;
+    video.play().catch(()=>{});
+
+    recordBtn.disabled = false;
+    uploadBtn.disabled = false;
+    analyzing = false;
+    running = true;
+    loop();
+
+    showResults(t);
+  }
+
+  function analyzeStep(){
+    if(finished) return;
+    if(video.paused || video.ended){ finalizeAnalysis(); return; }
+    const t = video.currentTime;
     const result = landmarker.detectForVideo(video, Math.round(t*1000)+1);
     octx.clearRect(0,0,overlay.width, overlay.height);
     if(result.landmarks && result.landmarks[0]){
@@ -580,34 +608,16 @@ async function analyzeUploadedFile(file){
       processFrame(lm, t);
       drawAllTrajectories(octx, jointTrajectories, overlay.width, overlay.height);
       if(fallDetected && fallFrameIndex === buffer.length - 1){
-        t = duration + 1; // stop analysis at the fall, matching live behavior
-        break;
+        finalizeAnalysis();
+        return;
       }
     }
-
     progressBar.style.width = `${Math.min(100, Math.round((t/(duration||1))*100))}%`;
-    statusText.textContent = 'מנתח סרטון...';
-    t += step;
+    requestAnimationFrame(analyzeStep);
   }
 
-  finalizeOpenHolds(Math.min(t, duration));
-  progressWrap.classList.remove('show');
-  progressBar.style.width = '0%';
-  statusBox.classList.remove('live');
-  statusText.textContent = 'מוכן';
-  URL.revokeObjectURL(url);
-
-  video.src = '';
-  video.srcObject = cameraStream;
-  try{ await video.play(); }catch(e){}
-
-  recordBtn.disabled = false;
-  uploadBtn.disabled = false;
-  analyzing = false;
-  running = true;
-  loop();
-
-  showResults(Math.min(t, duration));
+  video.addEventListener('ended', finalizeAnalysis, {once:true});
+  requestAnimationFrame(analyzeStep);
 }
 
 closeResults.addEventListener('click', ()=>{
